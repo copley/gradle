@@ -19,8 +19,8 @@ package org.gradle.internal.execution.history.impl;
 import com.google.common.collect.ImmutableSortedMap;
 import com.google.common.collect.Interner;
 import org.gradle.cache.CacheDecorator;
-import org.gradle.cache.IndexedCache;
 import org.gradle.cache.IndexedCacheParameters;
+import org.gradle.cache.MultiProcessSafeIndexedCache;
 import org.gradle.cache.PersistentCache;
 import org.gradle.cache.internal.InMemoryCacheDecoratorFactory;
 import org.gradle.internal.execution.history.AfterExecutionState;
@@ -39,9 +39,9 @@ import static com.google.common.collect.Maps.transformValues;
 
 public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
 
-    private final PersistentCache cache;
-    private final IndexedCache<String, PreviousExecutionState> store;
+    private final MultiProcessSafeIndexedCache<String, PreviousExecutionState> store;
 
+    @SuppressWarnings("unchecked")
     public DefaultExecutionHistoryStore(
         Supplier<PersistentCache> cache,
         InMemoryCacheDecoratorFactory inMemoryCacheDecoratorFactory,
@@ -56,8 +56,7 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
         );
 
         CacheDecorator inMemoryCacheDecorator = inMemoryCacheDecoratorFactory.decorator(10000, false);
-        this.cache = cache.get();
-        this.store = this.cache.createIndexedCache(
+        this.store = (MultiProcessSafeIndexedCache<String, PreviousExecutionState>) cache.get().createIndexedCache(
             IndexedCacheParameters.of("executionHistory", String.class, serializer)
             .withCacheDecorator(inMemoryCacheDecorator)
         );
@@ -75,14 +74,12 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
 
     @Override
     public boolean storeIfUnchanged(String key, Optional<PreviousExecutionState> expectedState, AfterExecutionState executionState) {
-        return cache.useCache(() -> {
-            Optional<PreviousExecutionState> currentState = Optional.ofNullable(store.getIfPresent(key));
-            if (!sameHistoryEntry(currentState, expectedState)) {
-                return false;
-            }
-            store.put(key, toPreviousExecutionState(executionState));
-            return true;
-        });
+        PreviousExecutionState newState = toPreviousExecutionState(executionState);
+        return store.putIf(
+            key,
+            newState,
+            currentState -> sameHistoryEntry(Optional.ofNullable(currentState), expectedState)
+        );
     }
 
     @Override
