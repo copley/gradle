@@ -1,0 +1,121 @@
+/*
+ * Copyright 2026 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.gradle.internal.execution.history.impl
+
+import com.google.common.collect.ImmutableList
+import com.google.common.collect.ImmutableSortedMap
+import com.google.common.collect.Interners
+import org.gradle.cache.CacheDecorator
+import org.gradle.cache.IndexedCache
+import org.gradle.cache.PersistentCache
+import org.gradle.cache.internal.InMemoryCacheDecoratorFactory
+import org.gradle.caching.internal.origin.OriginMetadata
+import org.gradle.internal.execution.history.AfterExecutionState
+import org.gradle.internal.execution.history.PreviousExecutionState
+import org.gradle.internal.hash.ClassLoaderHierarchyHasher
+import org.gradle.internal.hash.TestHashCodes
+import org.gradle.internal.snapshot.impl.ImplementationSnapshot
+import spock.lang.Specification
+
+import java.time.Duration
+import java.util.function.Supplier
+
+class DefaultExecutionHistoryStoreTest extends Specification {
+    def indexedCache = Mock(IndexedCache<String, PreviousExecutionState>)
+    def persistentCache = Stub(PersistentCache)
+    def decoratorFactory = Stub(InMemoryCacheDecoratorFactory)
+    def decorator = Stub(CacheDecorator)
+    def classLoaderHasher = Stub(ClassLoaderHierarchyHasher)
+
+    def store
+
+    def setup() {
+        decoratorFactory.decorator(10000, false) >> decorator
+        persistentCache.createIndexedCache(_) >> indexedCache
+        persistentCache.useCache(_ as Supplier) >> { Supplier action -> action.get() }
+
+        store = new DefaultExecutionHistoryStore(
+            { persistentCache } as Supplier<PersistentCache>,
+            decoratorFactory,
+            Interners.newStrongInterner(),
+            classLoaderHasher
+        )
+    }
+
+    def "does not store when expected history was removed"() {
+        def expected = previousState("previous")
+
+        when:
+        def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
+
+        then:
+        1 * indexedCache.getIfPresent("work") >> null
+        0 * indexedCache.put(_, _)
+        !stored
+    }
+
+    def "does not store when expected history was replaced"() {
+        def expected = previousState("previous")
+        def replacement = previousState("replacement")
+
+        when:
+        def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
+
+        then:
+        1 * indexedCache.getIfPresent("work") >> replacement
+        0 * indexedCache.put(_, _)
+        !stored
+    }
+
+    def "stores when expected history is still current"() {
+        def expected = previousState("previous")
+        def current = previousState("previous")
+
+        when:
+        def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
+
+        then:
+        1 * indexedCache.getIfPresent("work") >> current
+        1 * indexedCache.put("work", _ as PreviousExecutionState)
+        stored
+    }
+
+    private static PreviousExecutionState previousState(String buildId) {
+        def cacheKey = TestHashCodes.hashCodeFrom(1234)
+        def originMetadata = new OriginMetadata(buildId, cacheKey, Duration.ofMillis(10))
+        return Stub(PreviousExecutionState) {
+            getCacheKey() >> cacheKey
+            getOriginMetadata() >> originMetadata
+            isSuccessful() >> true
+        }
+    }
+
+    private static AfterExecutionState afterState(String buildId) {
+        def cacheKey = TestHashCodes.hashCodeFrom(5678)
+        def originMetadata = new OriginMetadata(buildId, cacheKey, Duration.ofMillis(20))
+        return Stub(AfterExecutionState) {
+            getOriginMetadata() >> originMetadata
+            getCacheKey() >> cacheKey
+            getImplementation() >> ImplementationSnapshot.of("Test", TestHashCodes.hashCodeFrom(42))
+            getAdditionalImplementations() >> ImmutableList.of()
+            getInputProperties() >> ImmutableSortedMap.of()
+            getInputFileProperties() >> ImmutableSortedMap.of()
+            getOutputFilesProducedByWork() >> ImmutableSortedMap.of()
+            isSuccessful() >> true
+        }
+    }
+}
