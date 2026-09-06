@@ -20,6 +20,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSortedMap;
 import org.gradle.caching.internal.BuildCacheKeyInternal;
 import org.gradle.caching.internal.origin.OriginMetadata;
+import org.gradle.initialization.BuildCancellationToken;
 import org.gradle.internal.execution.MutableUnitOfWork;
 import org.gradle.internal.execution.history.AfterExecutionState;
 import org.gradle.internal.execution.history.BeforeExecutionState;
@@ -32,20 +33,45 @@ import org.gradle.internal.snapshot.FileSystemSnapshot;
 import org.gradle.internal.snapshot.ValueSnapshot;
 import org.gradle.internal.snapshot.impl.ImplementationSnapshot;
 
+import java.util.function.BooleanSupplier;
+
 public class StoreExecutionStateStep<C extends PreviousExecutionContext & CachingContext, R extends AfterExecutionResult> extends MutableStep<C, R> {
+    private final BooleanSupplier cancellationRequested;
     private final Step<? super C, ? extends R> delegate;
 
     public StoreExecutionStateStep(
         Step<? super C, ? extends R> delegate
     ) {
+        this(() -> false, delegate);
+    }
+
+    public StoreExecutionStateStep(
+        BuildCancellationToken cancellationToken,
+        Step<? super C, ? extends R> delegate
+    ) {
+        this(cancellationToken::isCancellationRequested, delegate);
+    }
+
+    private StoreExecutionStateStep(
+        BooleanSupplier cancellationRequested,
+        Step<? super C, ? extends R> delegate
+    ) {
+        this.cancellationRequested = cancellationRequested;
         this.delegate = delegate;
     }
 
     @Override
     protected R executeMutable(MutableUnitOfWork work, C context) {
         R result = delegate.execute(work, context);
-        work.getHistory()
-            .ifPresent(history -> context.getCachingState().getCacheKeyCalculatedState()
+        work.getHistory().ifPresent(history -> {
+            String identity = context.getIdentity().getUniqueId();
+            if (cancellationRequested.getAsBoolean()) {
+                // Work may have mutated its outputs before cancellation was observed. Do not let a
+                // cancelled invocation publish a new authoritative execution state.
+                history.remove(identity);
+                return;
+            }
+            context.getCachingState().getCacheKeyCalculatedState()
                 .flatMap(cacheKeyCalculatedState -> result.getAfterExecutionOutputState()
                     .filter(afterExecutionState -> result.getExecution().isSuccessful() || shouldPreserveFailedState(context, afterExecutionState))
                     .map(executionOutputState -> new DefaultAfterExecutionState(
@@ -53,10 +79,18 @@ public class StoreExecutionStateStep<C extends PreviousExecutionContext & Cachin
                         cacheKeyCalculatedState.getBeforeExecutionState(),
                         executionOutputState
                     )))
-                .ifPresent(afterExecutionState -> history.store(
-                    context.getIdentity().getUniqueId(),
-                    // TODO: Encode the "no cache key available" case in the context type hierarchy
-                    afterExecutionState)));
+                .ifPresent(afterExecutionState -> {
+                    if (cancellationRequested.getAsBoolean()) {
+                        history.remove(identity);
+                    } else {
+                        history.store(
+                            identity,
+                            // TODO: Encode the "no cache key available" case in the context type hierarchy
+                            afterExecutionState
+                        );
+                    }
+                });
+        });
         return result;
     }
 
