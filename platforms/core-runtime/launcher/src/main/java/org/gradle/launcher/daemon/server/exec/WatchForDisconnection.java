@@ -31,6 +31,13 @@ public class WatchForDisconnection implements DaemonCommandAction {
             @Override
             public void run() {
                 LOGGER.warn("thread {}: client disconnection detected, canceling the build", Thread.currentThread().getId());
+                try {
+                    // Propagate cancellation to the executing build immediately. requestCancel() only
+                    // changes the daemon state and the cancellation token may otherwise be signalled later.
+                    execution.getDaemonStateControl().getCancellationToken().cancel();
+                } catch (Exception ex) {
+                    LOGGER.error("Cancel processing failed. Will continue.", ex);
+                }
                 execution.getDaemonStateControl().requestCancel();
             }
         });
