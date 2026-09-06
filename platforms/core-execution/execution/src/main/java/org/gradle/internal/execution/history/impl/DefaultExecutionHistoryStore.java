@@ -91,8 +91,8 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
     }
 
     private static boolean sameHistoryEntry(Optional<PreviousExecutionState> currentState, Optional<PreviousExecutionState> expectedState) {
-        if (currentState.isEmpty() || expectedState.isEmpty()) {
-            return currentState.isEmpty() && expectedState.isEmpty();
+        if (!currentState.isPresent() || !expectedState.isPresent()) {
+            return !currentState.isPresent() && !expectedState.isPresent();
         }
         PreviousExecutionState current = currentState.get();
         PreviousExecutionState expected = expectedState.get();
