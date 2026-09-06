@@ -94,7 +94,7 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         stored
     }
 
-    private static PreviousExecutionState previousState(String buildId) {
+    private PreviousExecutionState previousState(String buildId) {
         def cacheKey = TestHashCodes.hashCodeFrom(1234)
         def originMetadata = new OriginMetadata(buildId, cacheKey, Duration.ofMillis(10))
         return Stub(PreviousExecutionState) {
@@ -104,7 +104,7 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         }
     }
 
-    private static AfterExecutionState afterState(String buildId) {
+    private AfterExecutionState afterState(String buildId) {
         def cacheKey = TestHashCodes.hashCodeFrom(5678)
         def originMetadata = new OriginMetadata(buildId, cacheKey, Duration.ofMillis(20))
         return Stub(AfterExecutionState) {
