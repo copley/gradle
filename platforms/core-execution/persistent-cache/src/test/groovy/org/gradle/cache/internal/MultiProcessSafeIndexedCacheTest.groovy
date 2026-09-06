@@ -6,7 +6,6 @@
  * You may obtain a copy of the License at
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
- *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -62,6 +61,36 @@ class MultiProcessSafeIndexedCacheTest extends Specification {
         then:
         1 * fileAccess.writeFile(!null) >> { Runnable action -> action.run() }
         1 * backingCache.put("key", "value")
+        0 * _._
+    }
+
+    def "conditionally updates entry under one write lock"() {
+        given:
+        cacheOpened()
+
+        when:
+        def stored = cache.putIf("key", "new", { it == "old" })
+
+        then:
+        stored
+        1 * fileAccess.writeFile(!null) >> { Runnable action -> action.run() }
+        1 * backingCache.get("key") >> "old"
+        1 * backingCache.put("key", "new")
+        0 * _._
+    }
+
+    def "does not update entry when condition does not match"() {
+        given:
+        cacheOpened()
+
+        when:
+        def stored = cache.putIf("key", "new", { it == "expected" })
+
+        then:
+        !stored
+        1 * fileAccess.writeFile(!null) >> { Runnable action -> action.run() }
+        1 * backingCache.get("key") >> "different"
+        0 * backingCache.put(_, _)
         0 * _._
     }
 
