@@ -15,6 +15,9 @@
  */
 package org.gradle.api.internal.tasks.compile;
 
+import com.sun.source.util.JavacTask;
+import com.sun.source.util.TaskEvent;
+import com.sun.source.util.TaskListener;
 import com.sun.tools.javac.util.Context;
 import org.gradle.api.JavaVersion;
 import org.gradle.api.internal.tasks.compile.processing.AnnotationProcessorDeclaration;
@@ -36,18 +39,24 @@ import javax.tools.JavaCompiler;
 import javax.tools.JavaFileManager;
 import javax.tools.JavaFileObject;
 import javax.tools.StandardJavaFileManager;
+import java.io.IOException;
 import java.io.Serializable;
+import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.util.stream.Collectors.toList;
 
 public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable {
     private static final Logger LOGGER = LoggerFactory.getLogger(JdkJavaCompiler.class);
+    private static final String GENERATE_MARKER_PROPERTY = "org.gradle.internal.java.compile.generateMarker";
 
     private final Context context;
     private final Factory<ContextAwareJavaCompiler> compilerFactory;
@@ -110,6 +119,7 @@ public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable 
         JavaFileManager fileManager = GradleStandardJavaFileManager.wrap(standardFileManager, DefaultClassPath.of(spec.getAnnotationProcessorPath()), hasEmptySourcepaths);
 
         JavaCompiler.CompilationTask task = compiler.getTask(null, fileManager, diagnosticToProblemListener, options, spec.getClassesToProcess(), compilationUnits, context);
+        attachGenerateMarker(task);
         if (compiler instanceof IncrementalCompilationAwareJavaCompiler) {
             task = ((IncrementalCompilationAwareJavaCompiler) compiler).makeIncremental(
                 task,
@@ -123,6 +133,36 @@ public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable 
         task = new AnnotationProcessingCompileTask(task, annotationProcessors, spec.getAnnotationProcessorPath(), result.getAnnotationProcessingResult());
         task = new ResourceCleaningCompilationTask(task, fileManager);
         return task;
+    }
+
+    private static void attachGenerateMarker(JavaCompiler.CompilationTask task) {
+        String markerPath = System.getProperty(GENERATE_MARKER_PROPERTY);
+        if (markerPath == null || !(task instanceof JavacTask)) {
+            return;
+        }
+
+        AtomicBoolean markerWritten = new AtomicBoolean();
+        ((JavacTask) task).addTaskListener(new TaskListener() {
+            @Override
+            public void started(TaskEvent event) {
+                if (event.getKind() == TaskEvent.Kind.GENERATE && markerWritten.compareAndSet(false, true)) {
+                    Path marker = Path.of(markerPath);
+                    try {
+                        Path parent = marker.getParent();
+                        if (parent != null) {
+                            Files.createDirectories(parent);
+                        }
+                        Files.writeString(marker, "generate\n");
+                    } catch (IOException ex) {
+                        throw new UncheckedIOException(ex);
+                    }
+                }
+            }
+
+            @Override
+            public void finished(TaskEvent event) {
+            }
+        });
     }
 
     private static boolean emptySourcepathIn(List<String> options) {
