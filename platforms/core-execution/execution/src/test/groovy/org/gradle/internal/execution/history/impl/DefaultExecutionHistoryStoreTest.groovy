@@ -6,7 +6,6 @@
  * You may obtain a copy of the License at
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
- *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,7 +19,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.collect.ImmutableSortedMap
 import com.google.common.collect.Interners
 import org.gradle.cache.CacheDecorator
-import org.gradle.cache.IndexedCache
+import org.gradle.cache.MultiProcessSafeIndexedCache
 import org.gradle.cache.PersistentCache
 import org.gradle.cache.internal.InMemoryCacheDecoratorFactory
 import org.gradle.caching.internal.origin.OriginMetadata
@@ -32,10 +31,11 @@ import org.gradle.internal.snapshot.impl.ImplementationSnapshot
 import spock.lang.Specification
 
 import java.time.Duration
+import java.util.function.Predicate
 import java.util.function.Supplier
 
 class DefaultExecutionHistoryStoreTest extends Specification {
-    def indexedCache = Mock(IndexedCache<String, PreviousExecutionState>)
+    def indexedCache = Mock(MultiProcessSafeIndexedCache<String, PreviousExecutionState>)
     def persistentCache = Stub(PersistentCache)
     def decoratorFactory = Stub(InMemoryCacheDecoratorFactory)
     def decorator = Stub(CacheDecorator)
@@ -46,7 +46,6 @@ class DefaultExecutionHistoryStoreTest extends Specification {
     def setup() {
         decoratorFactory.decorator(10000, false) >> decorator
         persistentCache.createIndexedCache(_) >> indexedCache
-        persistentCache.useCache(_ as Supplier) >> { Supplier action -> action.get() }
 
         store = new DefaultExecutionHistoryStore(
             { persistentCache } as Supplier<PersistentCache>,
@@ -63,8 +62,10 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
 
         then:
-        1 * indexedCache.getIfPresent("work") >> null
-        0 * indexedCache.put(_, _)
+        1 * indexedCache.putIf("work", _ as PreviousExecutionState, _ as Predicate) >> { String key, PreviousExecutionState value, Predicate condition ->
+            assert !condition.test(null)
+            false
+        }
         !stored
     }
 
@@ -76,8 +77,10 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
 
         then:
-        1 * indexedCache.getIfPresent("work") >> replacement
-        0 * indexedCache.put(_, _)
+        1 * indexedCache.putIf("work", _ as PreviousExecutionState, _ as Predicate) >> { String key, PreviousExecutionState value, Predicate condition ->
+            assert !condition.test(replacement)
+            false
+        }
         !stored
     }
 
@@ -89,8 +92,22 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
 
         then:
-        1 * indexedCache.getIfPresent("work") >> current
-        1 * indexedCache.put("work", _ as PreviousExecutionState)
+        1 * indexedCache.putIf("work", _ as PreviousExecutionState, _ as Predicate) >> { String key, PreviousExecutionState value, Predicate condition ->
+            assert condition.test(current)
+            true
+        }
+        stored
+    }
+
+    def "stores when history was absent and remains absent"() {
+        when:
+        def stored = store.storeIfUnchanged("work", Optional.empty(), afterState("current"))
+
+        then:
+        1 * indexedCache.putIf("work", _ as PreviousExecutionState, _ as Predicate) >> { String key, PreviousExecutionState value, Predicate condition ->
+            assert condition.test(null)
+            true
+        }
         stored
     }
 
