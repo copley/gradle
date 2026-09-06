@@ -39,6 +39,7 @@ import static com.google.common.collect.Maps.transformValues;
 
 public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
 
+    private final PersistentCache cache;
     private final IndexedCache<String, PreviousExecutionState> store;
 
     public DefaultExecutionHistoryStore(
@@ -55,7 +56,8 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
         );
 
         CacheDecorator inMemoryCacheDecorator = inMemoryCacheDecoratorFactory.decorator(10000, false);
-        this.store = cache.get().createIndexedCache(
+        this.cache = cache.get();
+        this.store = this.cache.createIndexedCache(
             IndexedCacheParameters.of("executionHistory", String.class, serializer)
             .withCacheDecorator(inMemoryCacheDecorator)
         );
@@ -68,7 +70,39 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
 
     @Override
     public void store(String key, AfterExecutionState executionState) {
-        store.put(key, new DefaultPreviousExecutionState(
+        store.put(key, toPreviousExecutionState(executionState));
+    }
+
+    @Override
+    public boolean storeIfUnchanged(String key, Optional<PreviousExecutionState> expectedState, AfterExecutionState executionState) {
+        return cache.useCache(() -> {
+            Optional<PreviousExecutionState> currentState = Optional.ofNullable(store.getIfPresent(key));
+            if (!sameHistoryEntry(currentState, expectedState)) {
+                return false;
+            }
+            store.put(key, toPreviousExecutionState(executionState));
+            return true;
+        });
+    }
+
+    @Override
+    public void remove(String key) {
+        store.remove(key);
+    }
+
+    private static boolean sameHistoryEntry(Optional<PreviousExecutionState> currentState, Optional<PreviousExecutionState> expectedState) {
+        if (currentState.isEmpty() || expectedState.isEmpty()) {
+            return currentState.isEmpty() && expectedState.isEmpty();
+        }
+        PreviousExecutionState current = currentState.get();
+        PreviousExecutionState expected = expectedState.get();
+        return current.getCacheKey().equals(expected.getCacheKey())
+            && current.getOriginMetadata().equals(expected.getOriginMetadata())
+            && current.isSuccessful() == expected.isSuccessful();
+    }
+
+    private static PreviousExecutionState toPreviousExecutionState(AfterExecutionState executionState) {
+        return new DefaultPreviousExecutionState(
             executionState.getOriginMetadata(),
             executionState.getCacheKey(),
             executionState.getImplementation(),
@@ -77,12 +111,7 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
             prepareForSerialization(executionState.getInputFileProperties()),
             executionState.getOutputFilesProducedByWork(),
             executionState.isSuccessful()
-        ));
-    }
-
-    @Override
-    public void remove(String key) {
-        store.remove(key);
+        );
     }
 
     private static ImmutableSortedMap<String, FileCollectionFingerprint> prepareForSerialization(ImmutableSortedMap<String, CurrentFileCollectionFingerprint> fingerprints) {
