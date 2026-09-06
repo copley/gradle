@@ -45,18 +45,18 @@ import java.io.UncheckedIOException;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import static java.util.stream.Collectors.toList;
 
 public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable {
     private static final Logger LOGGER = LoggerFactory.getLogger(JdkJavaCompiler.class);
-    private static final String GENERATE_MARKER_PROPERTY = "org.gradle.internal.java.compile.generateMarker";
+    private static final String PHASE_MARKER_DIR_PROPERTY = "org.gradle.internal.java.compile.phaseMarkerDir";
 
     private final Context context;
     private final Factory<ContextAwareJavaCompiler> compilerFactory;
@@ -88,6 +88,7 @@ public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable 
                 buildProblemFrom(ex, builder);
             });
         }
+        writePhaseMarker("call");
         boolean success = task.call();
         String diagnosticCounts = diagnosticToProblemListener.diagnosticCounts();
         if (!"".equals(diagnosticCounts)) {
@@ -119,7 +120,7 @@ public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable 
         JavaFileManager fileManager = GradleStandardJavaFileManager.wrap(standardFileManager, DefaultClassPath.of(spec.getAnnotationProcessorPath()), hasEmptySourcepaths);
 
         JavaCompiler.CompilationTask task = compiler.getTask(null, fileManager, diagnosticToProblemListener, options, spec.getClassesToProcess(), compilationUnits, context);
-        attachGenerateMarker(task);
+        attachPhaseMarkers(task);
         if (compiler instanceof IncrementalCompilationAwareJavaCompiler) {
             task = ((IncrementalCompilationAwareJavaCompiler) compiler).makeIncremental(
                 task,
@@ -135,27 +136,17 @@ public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable 
         return task;
     }
 
-    private static void attachGenerateMarker(JavaCompiler.CompilationTask task) {
-        String markerPath = System.getProperty(GENERATE_MARKER_PROPERTY);
-        if (markerPath == null || !(task instanceof JavacTask)) {
+    private static void attachPhaseMarkers(JavaCompiler.CompilationTask task) {
+        if (System.getProperty(PHASE_MARKER_DIR_PROPERTY) == null || !(task instanceof JavacTask)) {
             return;
         }
 
-        AtomicBoolean markerWritten = new AtomicBoolean();
+        Set<TaskEvent.Kind> markedPhases = EnumSet.noneOf(TaskEvent.Kind.class);
         ((JavacTask) task).addTaskListener(new TaskListener() {
             @Override
             public void started(TaskEvent event) {
-                if (event.getKind() == TaskEvent.Kind.GENERATE && markerWritten.compareAndSet(false, true)) {
-                    Path marker = Path.of(markerPath);
-                    try {
-                        Path parent = marker.getParent();
-                        if (parent != null) {
-                            Files.createDirectories(parent);
-                        }
-                        Files.writeString(marker, "generate\n");
-                    } catch (IOException ex) {
-                        throw new UncheckedIOException(ex);
-                    }
+                if (markedPhases.add(event.getKind())) {
+                    writePhaseMarker(event.getKind().name().toLowerCase());
                 }
             }
 
@@ -163,6 +154,21 @@ public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable 
             public void finished(TaskEvent event) {
             }
         });
+    }
+
+    private static void writePhaseMarker(String phase) {
+        String markerDir = System.getProperty(PHASE_MARKER_DIR_PROPERTY);
+        if (markerDir == null) {
+            return;
+        }
+
+        Path directory = Path.of(markerDir);
+        try {
+            Files.createDirectories(directory);
+            Files.writeString(directory.resolve(phase), phase + "\n");
+        } catch (IOException ex) {
+            throw new UncheckedIOException(ex);
+        }
     }
 
     private static boolean emptySourcepathIn(List<String> options) {
