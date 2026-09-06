@@ -197,7 +197,7 @@ public class ExecutionBuildServices implements ServiceRegistrationProvider {
             new ResolveMutableCachingStateStep<>(buildCacheController, emitBuildCacheDebugLogging,
             new MarkSnapshottingInputsFinishedStep<>(
             new SkipUpToDateStep<>(
-            new StoreExecutionStateStep<>(
+            new StoreExecutionStateStep<>(cancellationToken,
             new BuildCacheStep<>(buildCacheController, deleter, fileSystemAccess, outputChangeListener,
             new ResolveInputChangesStep<>(
             new CaptureOutputsAfterExecutionStep<>(buildOperationRunner, buildId, outputSnapshotter, new OverlappingOutputsFilter(),
