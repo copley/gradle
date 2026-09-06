@@ -43,7 +43,37 @@ public class TestExecutionHistoryStore implements ExecutionHistoryStore {
 
     @Override
     public void store(String key, AfterExecutionState executionState) {
-        executionHistory.put(key, new DefaultPreviousExecutionState(
+        executionHistory.put(key, toPreviousExecutionState(executionState));
+    }
+
+    @Override
+    public boolean storeIfUnchanged(String key, Optional<PreviousExecutionState> expectedState, AfterExecutionState executionState) {
+        Optional<PreviousExecutionState> currentState = load(key);
+        if (!sameHistoryEntry(currentState, expectedState)) {
+            return false;
+        }
+        executionHistory.put(key, toPreviousExecutionState(executionState));
+        return true;
+    }
+
+    @Override
+    public void remove(String key) {
+        executionHistory.remove(key);
+    }
+
+    private static boolean sameHistoryEntry(Optional<PreviousExecutionState> currentState, Optional<PreviousExecutionState> expectedState) {
+        if (currentState.isEmpty() || expectedState.isEmpty()) {
+            return currentState.isEmpty() && expectedState.isEmpty();
+        }
+        PreviousExecutionState current = currentState.get();
+        PreviousExecutionState expected = expectedState.get();
+        return current.getCacheKey().equals(expected.getCacheKey())
+            && current.getOriginMetadata().equals(expected.getOriginMetadata())
+            && current.isSuccessful() == expected.isSuccessful();
+    }
+
+    private static PreviousExecutionState toPreviousExecutionState(AfterExecutionState executionState) {
+        return new DefaultPreviousExecutionState(
             executionState.getOriginMetadata(),
             executionState.getCacheKey(),
             executionState.getImplementation(),
@@ -52,12 +82,7 @@ public class TestExecutionHistoryStore implements ExecutionHistoryStore {
             prepareForSerialization(executionState.getInputFileProperties()),
             executionState.getOutputFilesProducedByWork(),
             executionState.isSuccessful()
-        ));
-    }
-
-    @Override
-    public void remove(String key) {
-        executionHistory.remove(key);
+        );
     }
 
     private static ImmutableSortedMap<String, FileCollectionFingerprint> prepareForSerialization(ImmutableSortedMap<String, CurrentFileCollectionFingerprint> fingerprints) {
