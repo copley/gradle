@@ -88,7 +88,7 @@ public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable 
                 buildProblemFrom(ex, builder);
             });
         }
-        writePhaseMarker("call");
+        writePhaseMarker("CALL");
         boolean success = task.call();
         String diagnosticCounts = diagnosticToProblemListener.diagnosticCounts();
         if (!"".equals(diagnosticCounts)) {
@@ -146,7 +146,7 @@ public class JdkJavaCompiler implements Compiler<JavaCompileSpec>, Serializable 
             @Override
             public void started(TaskEvent event) {
                 if (markedPhases.add(event.getKind())) {
-                    writePhaseMarker(event.getKind().name().toLowerCase());
+                    writePhaseMarker(event.getKind().name());
                 }
             }
 
