@@ -20,6 +20,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.collect.ImmutableSortedMap
 import org.gradle.caching.internal.SimpleBuildCacheKey
 import org.gradle.caching.internal.origin.OriginMetadata
+import org.gradle.initialization.BuildCancellationToken
 import org.gradle.internal.Try
 import org.gradle.internal.execution.Execution
 import org.gradle.internal.execution.MutableUnitOfWork
@@ -35,6 +36,7 @@ import org.gradle.internal.snapshot.impl.ImplementationSnapshot
 class StoreExecutionStateStepTest extends StepSpec<MutableCachingContext> implements SnapshotterFixture {
     def executionHistoryStore = Mock(ExecutionHistoryStore)
     def cacheKey = TestHashCodes.hashCodeFrom(1234)
+    def cancellationToken = Stub(BuildCancellationToken)
 
     def originMetadata = Mock(OriginMetadata)
     def beforeExecutionState = Stub(BeforeExecutionState) {
@@ -47,7 +49,7 @@ class StoreExecutionStateStepTest extends StepSpec<MutableCachingContext> implem
     def outputFile = file("output.txt").text = "output"
     def outputFilesProducedByWork = snapshotsOf(output: outputFile)
 
-    def step = new StoreExecutionStateStep<MutableCachingContext, AfterExecutionResult>(delegate)
+    def step = new StoreExecutionStateStep<MutableCachingContext, AfterExecutionResult>(cancellationToken, delegate)
     def delegateResult = Mock(AfterExecutionResult)
     def work = Stub(MutableUnitOfWork)
 
@@ -143,6 +145,22 @@ class StoreExecutionStateStepTest extends StepSpec<MutableCachingContext> implem
         _ * delegateResult.execution >> Try.failure(new RuntimeException("execution error"))
         _ * context.previousExecutionState >> Optional.of(previousExecutionState)
         1 * previousExecutionState.outputFilesProducedByWork >> outputFilesProducedByWork
+        0 * _
+    }
+
+    def "execution history is discarded when cancellation is requested before state is stored"() {
+        given:
+        cancellationToken.isCancellationRequested() >> true
+
+        when:
+        def result = step.execute(work, context)
+
+        then:
+        result == delegateResult
+        1 * delegate.execute(work, context) >> delegateResult
+
+        then:
+        1 * executionHistoryStore.remove(identity.uniqueId)
         0 * _
     }
 
