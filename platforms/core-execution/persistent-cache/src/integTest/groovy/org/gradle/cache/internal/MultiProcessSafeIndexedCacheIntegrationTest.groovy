@@ -42,9 +42,6 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
             import org.gradle.cache.UnscopedCacheBuilderFactory
 
             abstract class CacheOperation extends DefaultTask {
-                @Inject
-                abstract UnscopedCacheBuilderFactory getCacheBuilderFactory()
-
                 @Input
                 abstract Property<String> getOperation()
 
@@ -53,6 +50,7 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
 
                 @TaskAction
                 void runOperation() {
+                    def cacheBuilderFactory = project.services.get(UnscopedCacheBuilderFactory)
                     def cache = cacheBuilderFactory
                         .cache(new File(cachePath.get()))
                         .withDisplayName("conditional update integration test cache")
