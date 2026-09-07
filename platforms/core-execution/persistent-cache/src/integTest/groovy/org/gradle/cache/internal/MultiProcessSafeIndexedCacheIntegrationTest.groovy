@@ -34,92 +34,101 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
 
     def "stale conditional writer cannot overwrite an invalidation from another process"() {
         given:
-        def cacheDir = file("shared-cache")
+        def cacheFile = file("shared-cache/entries.bin")
         buildFile << """
             import org.gradle.cache.FileLockManager
             import org.gradle.cache.IndexedCacheParameters
-            import org.gradle.cache.MultiProcessSafeIndexedCache
-            import org.gradle.cache.UnscopedCacheBuilderFactory
+            import org.gradle.cache.internal.DefaultMultiProcessSafeIndexedCache
+            import org.gradle.cache.internal.OnDemandFileAccess
+            import org.gradle.cache.internal.btree.BTreePersistentIndexedCache
 
             abstract class CacheOperation extends DefaultTask {
                 @Inject
-                abstract UnscopedCacheBuilderFactory getCacheBuilderFactory()
+                abstract FileLockManager getFileLockManager()
 
                 @Input
                 abstract Property<String> getOperation()
 
                 @Input
-                abstract Property<String> getCachePath()
+                abstract Property<String> getCacheFilePath()
+
+                private def withCache(Closure action) {
+                    def target = new File(cacheFilePath.get())
+                    target.parentFile.mkdirs()
+                    def parameters = IndexedCacheParameters.of("entries", String.class, String.class)
+                    def fileAccess = new OnDemandFileAccess(target, "conditional update integration test cache", fileLockManager)
+                    def indexedCache = new DefaultMultiProcessSafeIndexedCache<String, String>(
+                        { new BTreePersistentIndexedCache<String, String>(
+                            target,
+                            parameters.getKeySerializer(),
+                            parameters.getValueSerializer()
+                        ) } as java.util.function.Supplier,
+                        fileAccess
+                    )
+                    try {
+                        return action(indexedCache)
+                    } finally {
+                        indexedCache.finishWork()
+                    }
+                }
 
                 @TaskAction
                 void runOperation() {
-                    def cache = cacheBuilderFactory
-                        .cache(new File(cachePath.get()))
-                        .withDisplayName("conditional update integration test cache")
-                        .withInitialLockMode(FileLockManager.LockMode.OnDemand)
-                        .open()
-                    try {
-                        def indexedCache = (MultiProcessSafeIndexedCache<String, String>) cache.createIndexedCache(
-                            IndexedCacheParameters.of("entries", String.class, String.class)
-                        )
-                        def projectDir = new File(cachePath.get()).parentFile
-                        switch (operation.get()) {
-                            case "seed":
-                                cache.useCache {
-                                    indexedCache.put("key", "initial")
-                                }
-                                break
-                            case "staleWriter":
-                                def expected = cache.useCache {
-                                    indexedCache.getIfPresent("key")
-                                }
-                                assert expected == "initial"
-                                new File(projectDir, "writer.pid").text = ProcessHandle.current().pid().toString()
-                                ${server.callFromBuild("writerLoaded")}
-                                def stored = cache.useCache {
-                                    indexedCache.putIf(
-                                        "key",
-                                        "stale",
-                                        { current -> current == expected } as java.util.function.Predicate<String>
-                                    )
-                                }
-                                println "STALE_STORE_RESULT=" + stored
-                                break
-                            case "invalidate":
-                                new File(projectDir, "invalidator.pid").text = ProcessHandle.current().pid().toString()
-                                cache.useCache {
-                                    indexedCache.remove("key")
-                                }
-                                break
-                            case "assertAbsent":
-                                cache.useCache {
-                                    assert indexedCache.getIfPresent("key") == null
-                                }
-                                break
-                            default:
-                                throw new GradleException("Unknown operation: " + operation.get())
-                        }
-                    } finally {
-                        cache.close()
+                    def projectDir = new File(cacheFilePath.get()).parentFile.parentFile
+                    switch (operation.get()) {
+                        case "seed":
+                            withCache { cache ->
+                                cache.put("key", "initial")
+                            }
+                            break
+                        case "staleWriter":
+                            def expected = withCache { cache ->
+                                cache.getIfPresent("key")
+                            }
+                            assert expected == "initial"
+                            new File(projectDir, "writer.pid").text = ProcessHandle.current().pid().toString()
+                            ${server.callFromBuild("writerLoaded")}
+                            def stored = withCache { cache ->
+                                cache.putIf(
+                                    "key",
+                                    "stale",
+                                    { current -> current == expected } as java.util.function.Predicate<String>
+                                )
+                            }
+                            println "STALE_STORE_RESULT=" + stored
+                            break
+                        case "invalidate":
+                            new File(projectDir, "invalidator.pid").text = ProcessHandle.current().pid().toString()
+                            withCache { cache ->
+                                cache.remove("key")
+                            }
+                            break
+                        case "assertAbsent":
+                            withCache { cache ->
+                                assert cache.getIfPresent("key") == null
+                            }
+                            break
+                        default:
+                            throw new GradleException("Unknown operation: " + operation.get())
                     }
                 }
             }
 
             tasks.register("seed", CacheOperation) {
                 operation.set("seed")
-                cachePath.set("${cacheDir.absolutePath}")
+                cacheFilePath.set("${cacheFile.absolutePath}")
             }
             tasks.register("staleWriter", CacheOperation) {
                 operation.set("staleWriter")
-                cachePath.set("${cacheDir.absolutePath}")
+                cacheFilePath.set("${cacheFile.absolutePath}")
             }
             tasks.register("invalidate", CacheOperation) {
                 operation.set("invalidate")
-                cachePath.set("${cacheDir.absolutePath}")
+                cacheFilePath.set("${cacheFile.absolutePath}")
             }
             tasks.register("assertAbsent", CacheOperation) {
                 operation.set("assertAbsent")
-                cachePath.set("${cacheDir.absolutePath}")
+                cacheFilePath.set("${cacheFile.absolutePath}")
             }
         """
 
