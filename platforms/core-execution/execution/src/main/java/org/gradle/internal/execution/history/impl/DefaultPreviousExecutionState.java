@@ -6,7 +6,6 @@
  * You may obtain a copy of the License at
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
- *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -27,12 +26,14 @@ import org.gradle.internal.snapshot.ValueSnapshot;
 import org.gradle.internal.snapshot.impl.ImplementationSnapshot;
 
 public class DefaultPreviousExecutionState extends AbstractInputExecutionState<FileCollectionFingerprint> implements PreviousExecutionState {
+    private final String executionHistoryEntryId;
     private final ImmutableSortedMap<String, FileSystemSnapshot> outputFilesProducedByWork;
     private final OriginMetadata originMetadata;
     private final boolean successful;
     private final HashCode cacheKey;
 
     public DefaultPreviousExecutionState(
+        String executionHistoryEntryId,
         OriginMetadata originMetadata,
         HashCode cacheKey,
         ImplementationSnapshot implementation,
@@ -43,10 +44,15 @@ public class DefaultPreviousExecutionState extends AbstractInputExecutionState<F
         boolean successful
     ) {
         super(implementation, additionalImplementations, inputProperties, inputFileProperties);
+        this.executionHistoryEntryId = executionHistoryEntryId;
         this.outputFilesProducedByWork = outputFilesProducedByWork;
         this.originMetadata = originMetadata;
         this.successful = successful;
         this.cacheKey = cacheKey;
+    }
+
+    public String getExecutionHistoryEntryId() {
+        return executionHistoryEntryId;
     }
 
     @Override
