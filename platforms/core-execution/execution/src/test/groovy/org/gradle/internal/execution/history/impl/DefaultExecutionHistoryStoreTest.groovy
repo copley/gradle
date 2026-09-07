@@ -55,7 +55,7 @@ class DefaultExecutionHistoryStoreTest extends Specification {
     }
 
     def "does not store when expected history was removed"() {
-        def expected = previousState("previous")
+        def expected = previousState("entry-1", "previous")
 
         when:
         def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
@@ -68,9 +68,9 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         !stored
     }
 
-    def "does not store when expected history was replaced"() {
-        def expected = previousState("previous")
-        def replacement = previousState("replacement")
+    def "does not store after ABA replacement with equivalent history"() {
+        def expected = previousState("entry-1", "same-origin")
+        def replacement = previousState("entry-2", "same-origin")
 
         when:
         def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
@@ -83,9 +83,9 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         !stored
     }
 
-    def "stores when expected history is still current"() {
-        def expected = previousState("previous")
-        def current = previousState("previous")
+    def "stores when exact expected history entry is still current"() {
+        def expected = previousState("entry-1", "previous")
+        def current = previousState("entry-1", "previous")
 
         when:
         def stored = store.storeIfUnchanged("work", Optional.of(expected), afterState("current"))
@@ -110,10 +110,11 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         stored
     }
 
-    private PreviousExecutionState previousState(String buildId) {
+    private DefaultPreviousExecutionState previousState(String entryId, String buildId) {
         def cacheKey = TestHashCodes.hashCodeFrom(1234)
         def originMetadata = new OriginMetadata(buildId, cacheKey, Duration.ofMillis(10))
-        return Stub(PreviousExecutionState) {
+        return Mock(DefaultPreviousExecutionState) {
+            getExecutionHistoryEntryId() >> entryId
             getCacheKey() >> cacheKey
             getOriginMetadata() >> originMetadata
             isSuccessful() >> true
