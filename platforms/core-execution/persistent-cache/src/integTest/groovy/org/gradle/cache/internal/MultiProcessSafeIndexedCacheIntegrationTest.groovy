@@ -40,14 +40,10 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
             import org.gradle.cache.IndexedCacheParameters
             import org.gradle.cache.MultiProcessSafeIndexedCache
             import org.gradle.cache.UnscopedCacheBuilderFactory
-            import org.gradle.cache.internal.InMemoryCacheDecoratorFactory
 
             abstract class CacheOperation extends DefaultTask {
                 @Inject
                 abstract UnscopedCacheBuilderFactory getCacheBuilderFactory()
-
-                @Inject
-                abstract InMemoryCacheDecoratorFactory getInMemoryCacheDecoratorFactory()
 
                 @Input
                 abstract Property<String> getOperation()
@@ -63,32 +59,42 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
                         .withInitialLockMode(FileLockManager.LockMode.OnDemand)
                         .open()
                     try {
-                        def parameters = IndexedCacheParameters.of("entries", String.class, String.class)
-                            .withCacheDecorator(inMemoryCacheDecoratorFactory.decorator(100, false))
-                        def indexedCache = (MultiProcessSafeIndexedCache<String, String>) cache.createIndexedCache(parameters)
+                        def indexedCache = (MultiProcessSafeIndexedCache<String, String>) cache.createIndexedCache(
+                            IndexedCacheParameters.of("entries", String.class, String.class)
+                        )
                         def projectDir = new File(cachePath.get()).parentFile
                         switch (operation.get()) {
                             case "seed":
-                                indexedCache.put("key", "initial")
+                                cache.useCache {
+                                    indexedCache.put("key", "initial")
+                                }
                                 break
                             case "staleWriter":
-                                def expected = indexedCache.getIfPresent("key")
+                                def expected = cache.useCache {
+                                    indexedCache.getIfPresent("key")
+                                }
                                 assert expected == "initial"
                                 new File(projectDir, "writer.pid").text = ProcessHandle.current().pid().toString()
                                 ${server.callFromBuild("writerLoaded")}
-                                def stored = indexedCache.putIf(
-                                    "key",
-                                    "stale",
-                                    { current -> current == expected } as java.util.function.Predicate<String>
-                                )
+                                def stored = cache.useCache {
+                                    indexedCache.putIf(
+                                        "key",
+                                        "stale",
+                                        { current -> current == expected } as java.util.function.Predicate<String>
+                                    )
+                                }
                                 println "STALE_STORE_RESULT=" + stored
                                 break
                             case "invalidate":
                                 new File(projectDir, "invalidator.pid").text = ProcessHandle.current().pid().toString()
-                                indexedCache.remove("key")
+                                cache.useCache {
+                                    indexedCache.remove("key")
+                                }
                                 break
                             case "assertAbsent":
-                                assert indexedCache.getIfPresent("key") == null
+                                cache.useCache {
+                                    assert indexedCache.getIfPresent("key") == null
+                                }
                                 break
                             default:
                                 throw new GradleException("Unknown operation: " + operation.get())
