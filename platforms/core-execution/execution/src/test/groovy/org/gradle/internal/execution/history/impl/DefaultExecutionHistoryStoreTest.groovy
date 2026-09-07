@@ -20,10 +20,10 @@ import com.google.common.collect.ImmutableSortedMap
 import com.google.common.collect.Interners
 import org.gradle.cache.CacheDecorator
 import org.gradle.cache.MultiProcessSafeIndexedCache
-import org.gradle.cache.PersistentCache
 import org.gradle.cache.internal.InMemoryCacheDecoratorFactory
 import org.gradle.caching.internal.origin.OriginMetadata
 import org.gradle.internal.execution.history.AfterExecutionState
+import org.gradle.internal.execution.history.ExecutionHistoryCacheAccess
 import org.gradle.internal.execution.history.PreviousExecutionState
 import org.gradle.internal.hash.ClassLoaderHierarchyHasher
 import org.gradle.internal.hash.TestHashCodes
@@ -32,11 +32,10 @@ import spock.lang.Specification
 
 import java.time.Duration
 import java.util.function.Predicate
-import java.util.function.Supplier
 
 class DefaultExecutionHistoryStoreTest extends Specification {
     def indexedCache = Mock(MultiProcessSafeIndexedCache<String, PreviousExecutionState>)
-    def persistentCache = Stub(PersistentCache)
+    def cacheAccess = Stub(ExecutionHistoryCacheAccess)
     def decoratorFactory = Stub(InMemoryCacheDecoratorFactory)
     def decorator = Stub(CacheDecorator)
     def classLoaderHasher = Stub(ClassLoaderHierarchyHasher)
@@ -45,10 +44,10 @@ class DefaultExecutionHistoryStoreTest extends Specification {
 
     def setup() {
         decoratorFactory.decorator(10000, false) >> decorator
-        persistentCache.createIndexedCache(_) >> indexedCache
+        cacheAccess.createIndexedCache(_) >> indexedCache
 
         store = new DefaultExecutionHistoryStore(
-            { persistentCache } as Supplier<PersistentCache>,
+            cacheAccess,
             decoratorFactory,
             Interners.newStrongInterner(),
             classLoaderHasher
