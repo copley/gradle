@@ -29,7 +29,7 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
 
     def setup() {
         server.start()
-        executer.requireOwnGradleUserHomeDir().requireDaemon()
+        executer.requireOwnGradleUserHomeDir().withDaemonBaseDir(file("daemon")).requireDaemon()
     }
 
     def "stale conditional writer cannot overwrite an invalidation from another process"() {
