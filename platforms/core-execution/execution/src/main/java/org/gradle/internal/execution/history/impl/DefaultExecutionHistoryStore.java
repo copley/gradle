@@ -21,9 +21,9 @@ import com.google.common.collect.Interner;
 import org.gradle.cache.CacheDecorator;
 import org.gradle.cache.IndexedCacheParameters;
 import org.gradle.cache.MultiProcessSafeIndexedCache;
-import org.gradle.cache.PersistentCache;
 import org.gradle.cache.internal.InMemoryCacheDecoratorFactory;
 import org.gradle.internal.execution.history.AfterExecutionState;
+import org.gradle.internal.execution.history.ExecutionHistoryCacheAccess;
 import org.gradle.internal.execution.history.ExecutionHistoryStore;
 import org.gradle.internal.execution.history.PreviousExecutionState;
 import org.gradle.internal.fingerprint.CurrentFileCollectionFingerprint;
@@ -32,7 +32,6 @@ import org.gradle.internal.hash.ClassLoaderHierarchyHasher;
 import org.gradle.internal.serialize.HashCodeSerializer;
 
 import java.util.Optional;
-import java.util.function.Supplier;
 
 import static com.google.common.collect.ImmutableSortedMap.copyOfSorted;
 import static com.google.common.collect.Maps.transformValues;
@@ -41,9 +40,8 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
 
     private final MultiProcessSafeIndexedCache<String, PreviousExecutionState> store;
 
-    @SuppressWarnings("unchecked")
     public DefaultExecutionHistoryStore(
-        Supplier<PersistentCache> cache,
+        ExecutionHistoryCacheAccess cache,
         InMemoryCacheDecoratorFactory inMemoryCacheDecoratorFactory,
         Interner<String> stringInterner,
         ClassLoaderHierarchyHasher classLoaderHasher
@@ -56,7 +54,7 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
         );
 
         CacheDecorator inMemoryCacheDecorator = inMemoryCacheDecoratorFactory.decorator(10000, false);
-        this.store = (MultiProcessSafeIndexedCache<String, PreviousExecutionState>) cache.get().createIndexedCache(
+        this.store = cache.createIndexedCache(
             IndexedCacheParameters.of("executionHistory", String.class, serializer)
             .withCacheDecorator(inMemoryCacheDecorator)
         );
