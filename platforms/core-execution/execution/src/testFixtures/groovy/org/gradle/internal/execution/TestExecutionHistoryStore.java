@@ -6,7 +6,6 @@
  * You may obtain a copy of the License at
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
- *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -28,6 +27,7 @@ import org.gradle.internal.fingerprint.FileCollectionFingerprint;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import static com.google.common.collect.ImmutableSortedMap.copyOfSorted;
 import static com.google.common.collect.Maps.transformValues;
@@ -62,18 +62,21 @@ public class TestExecutionHistoryStore implements ExecutionHistoryStore {
     }
 
     private static boolean sameHistoryEntry(Optional<PreviousExecutionState> currentState, Optional<PreviousExecutionState> expectedState) {
-        if (currentState.isEmpty() || expectedState.isEmpty()) {
-            return currentState.isEmpty() && expectedState.isEmpty();
+        if (!currentState.isPresent() || !expectedState.isPresent()) {
+            return !currentState.isPresent() && !expectedState.isPresent();
         }
         PreviousExecutionState current = currentState.get();
         PreviousExecutionState expected = expectedState.get();
-        return current.getCacheKey().equals(expected.getCacheKey())
-            && current.getOriginMetadata().equals(expected.getOriginMetadata())
-            && current.isSuccessful() == expected.isSuccessful();
+        if (!(current instanceof DefaultPreviousExecutionState) || !(expected instanceof DefaultPreviousExecutionState)) {
+            return false;
+        }
+        return ((DefaultPreviousExecutionState) current).getExecutionHistoryEntryId()
+            .equals(((DefaultPreviousExecutionState) expected).getExecutionHistoryEntryId());
     }
 
     private static PreviousExecutionState toPreviousExecutionState(AfterExecutionState executionState) {
         return new DefaultPreviousExecutionState(
+            UUID.randomUUID().toString(),
             executionState.getOriginMetadata(),
             executionState.getCacheKey(),
             executionState.getImplementation(),
