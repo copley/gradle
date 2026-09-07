@@ -32,6 +32,7 @@ import org.gradle.internal.hash.ClassLoaderHierarchyHasher;
 import org.gradle.internal.serialize.HashCodeSerializer;
 
 import java.util.Optional;
+import java.util.UUID;
 
 import static com.google.common.collect.ImmutableSortedMap.copyOfSorted;
 import static com.google.common.collect.Maps.transformValues;
@@ -91,13 +92,16 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
         }
         PreviousExecutionState current = currentState.get();
         PreviousExecutionState expected = expectedState.get();
-        return current.getCacheKey().equals(expected.getCacheKey())
-            && current.getOriginMetadata().equals(expected.getOriginMetadata())
-            && current.isSuccessful() == expected.isSuccessful();
+        if (!(current instanceof DefaultPreviousExecutionState) || !(expected instanceof DefaultPreviousExecutionState)) {
+            return false;
+        }
+        return ((DefaultPreviousExecutionState) current).getExecutionHistoryEntryId()
+            .equals(((DefaultPreviousExecutionState) expected).getExecutionHistoryEntryId());
     }
 
     private static PreviousExecutionState toPreviousExecutionState(AfterExecutionState executionState) {
         return new DefaultPreviousExecutionState(
+            UUID.randomUUID().toString(),
             executionState.getOriginMetadata(),
             executionState.getCacheKey(),
             executionState.getImplementation(),
