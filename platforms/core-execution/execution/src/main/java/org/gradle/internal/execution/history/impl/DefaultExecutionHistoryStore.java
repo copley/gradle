@@ -31,6 +31,12 @@ import org.gradle.internal.fingerprint.FileCollectionFingerprint;
 import org.gradle.internal.hash.ClassLoaderHierarchyHasher;
 import org.gradle.internal.serialize.HashCodeSerializer;
 
+import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.Optional;
 import java.util.function.Supplier;
 
@@ -38,6 +44,8 @@ import static com.google.common.collect.ImmutableSortedMap.copyOfSorted;
 import static com.google.common.collect.Maps.transformValues;
 
 public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
+
+    private static final String TRACE_FILE_ENV = "GRADLE_38985_TRACE_FILE";
 
     private final MultiProcessSafeIndexedCache<String, PreviousExecutionState> store;
 
@@ -64,27 +72,84 @@ public class DefaultExecutionHistoryStore implements ExecutionHistoryStore {
 
     @Override
     public Optional<PreviousExecutionState> load(String key) {
-        return Optional.ofNullable(store.getIfPresent(key));
+        PreviousExecutionState currentState = store.getIfPresent(key);
+        trace("LOAD", key, "current=" + origin(currentState));
+        return Optional.ofNullable(currentState);
     }
 
     @Override
     public void store(String key, AfterExecutionState executionState) {
-        store.put(key, toPreviousExecutionState(executionState));
+        PreviousExecutionState newState = toPreviousExecutionState(executionState);
+        trace("STORE", key, "new=" + origin(newState));
+        store.put(key, newState);
     }
 
     @Override
     public boolean storeIfUnchanged(String key, Optional<PreviousExecutionState> expectedState, AfterExecutionState executionState) {
         PreviousExecutionState newState = toPreviousExecutionState(executionState);
-        return store.putIf(
+        String expectedOrigin = origin(expectedState);
+        String[] currentOrigin = new String[] {"<not-compared>"};
+        boolean[] matches = new boolean[] {false};
+
+        boolean stored = store.putIf(
             key,
             newState,
-            currentState -> sameHistoryEntry(Optional.ofNullable(currentState), expectedState)
+            currentState -> {
+                currentOrigin[0] = origin(currentState);
+                matches[0] = sameHistoryEntry(Optional.ofNullable(currentState), expectedState);
+                return matches[0];
+            }
         );
+
+        trace(
+            "CAS",
+            key,
+            "expected=" + expectedOrigin
+                + " current=" + currentOrigin[0]
+                + " new=" + origin(newState)
+                + " match=" + matches[0]
+                + " stored=" + stored
+        );
+        return stored;
     }
 
     @Override
     public void remove(String key) {
+        trace("REMOVE_BEGIN", key, "");
         store.remove(key);
+        trace("REMOVE_RETURN", key, "");
+    }
+
+    private static String origin(Optional<PreviousExecutionState> state) {
+        return state.isPresent() ? origin(state.get()) : "<absent>";
+    }
+
+    private static String origin(PreviousExecutionState state) {
+        return state == null ? "<absent>" : state.getOriginMetadata().getBuildInvocationId();
+    }
+
+    private static void trace(String event, String key, String details) {
+        String traceFile = System.getenv(TRACE_FILE_ENV);
+        if (traceFile == null || traceFile.isEmpty()) {
+            return;
+        }
+
+        String line = System.currentTimeMillis()
+            + "\t" + ManagementFactory.getRuntimeMXBean().getName()
+            + "\t" + event
+            + "\t" + key
+            + "\t" + details
+            + System.lineSeparator();
+        try {
+            Files.write(
+                Paths.get(traceFile),
+                line.getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND
+            );
+        } catch (IOException ignored) {
+            // Diagnostic branch only: tracing must never affect the build under test.
+        }
     }
 
     private static boolean sameHistoryEntry(Optional<PreviousExecutionState> currentState, Optional<PreviousExecutionState> expectedState) {
