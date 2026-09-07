@@ -110,6 +110,20 @@ class DefaultExecutionHistoryStoreTest extends Specification {
         stored
     }
 
+    def "does not overwrite a concurrent store after loading absent history"() {
+        def concurrentState = previousState("entry-2", "concurrent")
+
+        when:
+        def stored = store.storeIfUnchanged("work", Optional.empty(), afterState("current"))
+
+        then:
+        1 * indexedCache.putIf("work", _ as PreviousExecutionState, _ as Predicate) >> { String key, PreviousExecutionState value, Predicate condition ->
+            assert !condition.test(concurrentState)
+            false
+        }
+        !stored
+    }
+
     private DefaultPreviousExecutionState previousState(String entryId, String buildId) {
         def cacheKey = TestHashCodes.hashCodeFrom(1234)
         def originMetadata = new OriginMetadata(buildId, cacheKey, Duration.ofMillis(10))
