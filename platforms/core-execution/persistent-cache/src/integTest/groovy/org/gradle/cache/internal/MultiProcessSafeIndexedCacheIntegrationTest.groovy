@@ -40,8 +40,15 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
             import org.gradle.cache.IndexedCacheParameters
             import org.gradle.cache.MultiProcessSafeIndexedCache
             import org.gradle.cache.UnscopedCacheBuilderFactory
+            import org.gradle.cache.internal.InMemoryCacheDecoratorFactory
 
             abstract class CacheOperation extends DefaultTask {
+                @Inject
+                abstract UnscopedCacheBuilderFactory getCacheBuilderFactory()
+
+                @Inject
+                abstract InMemoryCacheDecoratorFactory getInMemoryCacheDecoratorFactory()
+
                 @Input
                 abstract Property<String> getOperation()
 
@@ -50,16 +57,16 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
 
                 @TaskAction
                 void runOperation() {
-                    def cacheBuilderFactory = project.services.get(UnscopedCacheBuilderFactory)
                     def cache = cacheBuilderFactory
                         .cache(new File(cachePath.get()))
                         .withDisplayName("conditional update integration test cache")
                         .withInitialLockMode(FileLockManager.LockMode.OnDemand)
                         .open()
                     try {
-                        def indexedCache = (MultiProcessSafeIndexedCache<String, String>) cache.createIndexedCache(
-                            IndexedCacheParameters.of("entries", String.class, String.class)
-                        )
+                        def parameters = IndexedCacheParameters.of("entries", String.class, String.class)
+                            .withCacheDecorator(inMemoryCacheDecoratorFactory.decorator(100, false))
+                        def indexedCache = (MultiProcessSafeIndexedCache<String, String>) cache.createIndexedCache(parameters)
+                        def projectDir = new File(cachePath.get()).parentFile
                         switch (operation.get()) {
                             case "seed":
                                 indexedCache.put("key", "initial")
@@ -67,7 +74,7 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
                             case "staleWriter":
                                 def expected = indexedCache.getIfPresent("key")
                                 assert expected == "initial"
-                                project.file("writer.pid").text = ProcessHandle.current().pid().toString()
+                                new File(projectDir, "writer.pid").text = ProcessHandle.current().pid().toString()
                                 ${server.callFromBuild("writerLoaded")}
                                 def stored = indexedCache.putIf(
                                     "key",
@@ -77,7 +84,7 @@ class MultiProcessSafeIndexedCacheIntegrationTest extends AbstractIntegrationSpe
                                 println "STALE_STORE_RESULT=" + stored
                                 break
                             case "invalidate":
-                                project.file("invalidator.pid").text = ProcessHandle.current().pid().toString()
+                                new File(projectDir, "invalidator.pid").text = ProcessHandle.current().pid().toString()
                                 indexedCache.remove("key")
                                 break
                             case "assertAbsent":
